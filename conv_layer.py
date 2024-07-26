@@ -1,21 +1,8 @@
-"""Convolutional layer
-
-PyTorch implementation of CapsNet in Sabour, Hinton et al.'s paper
-Dynamic Routing Between Capsules. NIPS 2017.
-https://arxiv.org/abs/1710.09829
-
-Author: Cedric Chee
-"""
-
 import torch
 import torch.nn as nn
 
 
 class ConvLayer(nn.Module):
-    """
-    Conventional Conv2d layer
-    """
-
     def __init__(self, in_channel, out_channel, kernel_size):
         super(ConvLayer, self).__init__()
 

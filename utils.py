@@ -1,23 +1,16 @@
-"""Utilities
-
-PyTorch implementation of CapsNet in Sabour, Hinton et al.'s paper
-Dynamic Routing Between Capsules. NIPS 2017.
-https://arxiv.org/abs/1710.09829
-
-Author: Cedric Chee
-"""
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from torch.autograd import Variable
 from torchvision import transforms, datasets
 import torchvision.utils as vutils
 import argparse
+import os
+from torchvision.transforms import Grayscale
 
 
 def one_hot_encode(target, length):
-    """Converts batches of class indices to classes of one-hot vectors."""
     batch_s = target.size(0)
     one_hot_vec = torch.zeros(batch_s, length)
 
@@ -28,17 +21,12 @@ def one_hot_encode(target, length):
 
 
 def checkpoint(state, epoch):
-    """Save checkpoint"""
     model_out_path = 'results/trained_model/model_epoch_{}.pth'.format(epoch)
     torch.save(state, model_out_path)
     print('Checkpoint saved to {}'.format(model_out_path))
 
 
 def load_mnist(args):
-    """Load MNIST dataset.
-    The data is split and normalized between train and test sets.
-    """
-    # Normalize MNIST dataset.
     data_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
@@ -48,7 +36,6 @@ def load_mnist(args):
               'pin_memory': True} if args.cuda else {}
 
     print('===> Loading MNIST training datasets')
-    # MNIST dataset
     training_set = datasets.MNIST(
         './data', train=True, download=True, transform=data_transform)
     # Input pipeline
@@ -93,6 +80,34 @@ def load_cifar10(args):
 
     return training_data_loader, testing_data_loader
 
+def load_capsule_dataset(args):
+    data_dir = 'dataset'
+    print([os.path.join(data_dir, x) for x in os.listdir(data_dir)])
+    batch_size = 64
+
+    # Define the transformations
+    transform = transforms.Compose([
+        transforms.Resize((28, 28)),  # Resize to 28x28
+        Grayscale(num_output_channels=1),  # Convert to grayscale (1 channel)
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))  # Normalize for single channel
+    ])
+
+    # Load the full dataset
+    full_dataset = datasets.ImageFolder(data_dir, transform=transform)
+
+    image, label = full_dataset[0]
+    print(image.shape)  # Should print: torch.Size([1, 28, 28])
+
+
+    train_size = int(0.8 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+
+    training_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    testing_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    return training_data_loader, testing_data_loader
+
 
 def load_data(args):
     """
@@ -104,6 +119,8 @@ def load_data(args):
         return load_mnist(args)
     elif dst == 'cifar10':
         return load_cifar10(args)
+    elif dst == "capsule":
+        return load_capsule_dataset(args)
     else:
         raise Exception('Invalid dataset, please check the name of dataset:', dst)
 
@@ -201,7 +218,7 @@ def accuracy(output, target, cuda_enabled=True):
 
     v_length = torch.sqrt((output**2).sum(dim=2, keepdim=True))
     softmax_v = F.softmax(v_length, dim=1)
-    assert softmax_v.size() == torch.Size([batch_size, 10, 1, 1])
+    assert softmax_v.size() == torch.Size([batch_size, 4, 1, 1])
 
     _, max_index = softmax_v.max(dim=1)
     assert max_index.size() == torch.Size([batch_size, 1, 1])

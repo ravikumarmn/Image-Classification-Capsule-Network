@@ -4,3 +4,9 @@ torchvision
 tensorboardX
 tensorflow
 tqdm
+matplotlib
+streamlit
+keras
+shap
+scikit-image
+tensorflow

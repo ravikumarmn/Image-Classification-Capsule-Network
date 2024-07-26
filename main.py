@@ -1,16 +1,3 @@
-"""
-PyTorch implementation of CapsNet in Sabour, Hinton et al.'s paper
-Dynamic Routing Between Capsules. NIPS 2017.
-https://arxiv.org/abs/1710.09829
-
-Usage:
-    python main.py
-    python main.py --epochs 30
-    python main.py --epochs 30 --num-routing 1
-
-Author: Cedric Chee
-"""
-
 from __future__ import print_function
 import argparse
 from timeit import default_timer as timer
@@ -23,24 +10,16 @@ from torch.autograd import Variable
 import torchvision.utils as vutils
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 import utils
 from model import Net
 
 
 def train(model, data_loader, optimizer, epoch, writer):
-    """
-    Train CapsuleNet model on training set
-
-    Args:
-        model: The CapsuleNet model.
-        data_loader: An interator over the dataset. It combines a dataset and a sampler.
-        optimizer: Optimization algorithm.
-        epoch: Current epoch.
-    """
     print('===> Training mode')
 
-    num_batches = len(data_loader) # iteration per epoch. e.g: 469
+    num_batches = len(data_loader)  # iteration per epoch. e.g: 469
     total_step = args.epochs * num_batches
     epoch_tot_acc = 0
 
@@ -52,14 +31,14 @@ def train(model, data_loader, optimizer, epoch, writer):
         model = model.module
 
     start_time = timer()
-
+    epoch_tot_loss = 0
     for batch_idx, (data, target) in enumerate(tqdm(data_loader, unit='batch')):
         batch_size = data.size(0)
         global_step = batch_idx + (epoch * num_batches) - num_batches
 
         labels = target
         target_one_hot = utils.one_hot_encode(target, length=args.num_classes)
-        assert target_one_hot.size() == torch.Size([batch_size, 10])
+        assert target_one_hot.size() == torch.Size([batch_size, 4])
 
         data, target = Variable(data), Variable(target_one_hot)
 
@@ -69,7 +48,7 @@ def train(model, data_loader, optimizer, epoch, writer):
 
         # Train step - forward, backward and optimize
         optimizer.zero_grad()
-        output = model(data) # output from DigitCaps (out_digit_caps)
+        output = model(data)  # output from DigitCaps (out_digit_caps)
         loss, margin_loss, recon_loss = model.loss(data, output, target)
         loss.backward()
         optimizer.step()
@@ -77,14 +56,17 @@ def train(model, data_loader, optimizer, epoch, writer):
         # Calculate accuracy for each step and average accuracy for each epoch
         acc = utils.accuracy(output, labels, args.cuda)
         epoch_tot_acc += acc
+        epoch_tot_loss += loss.item()
         epoch_avg_acc = epoch_tot_acc / (batch_idx + 1)
 
         # TensorBoard logging
         # 1) Log the scalar values
-        writer.add_scalar('train/total_loss', loss.data[0], global_step)
-        writer.add_scalar('train/margin_loss', margin_loss.data[0], global_step)
+        writer.add_scalar('train/total_loss', loss.data.item(), global_step)
+        writer.add_scalar('train/margin_loss',
+                          margin_loss.data.item(), global_step)
         if args.use_reconstruction_loss:
-            writer.add_scalar('train/reconstruction_loss', recon_loss.data[0], global_step)
+            writer.add_scalar('train/reconstruction_loss',
+                              recon_loss.data.item(), global_step)
         writer.add_scalar('train/batch_accuracy', acc, global_step)
         writer.add_scalar('train/accuracy', epoch_avg_acc, global_step)
 
@@ -92,41 +74,38 @@ def train(model, data_loader, optimizer, epoch, writer):
         for tag, value in model.named_parameters():
             tag = tag.replace('.', '/')
             writer.add_histogram(tag, utils.to_np(value), global_step)
-            writer.add_histogram(tag + '/grad', utils.to_np(value.grad), global_step)
+            writer.add_histogram(
+                tag + '/grad', utils.to_np(value.grad), global_step)
 
         # Print losses
         if batch_idx % args.log_interval == 0:
             template = 'Epoch {}/{}, ' \
-                    'Step {}/{}: ' \
-                    '[Total loss: {:.6f},' \
-                    '\tMargin loss: {:.6f},' \
-                    '\tReconstruction loss: {:.6f},' \
-                    '\tBatch accuracy: {:.6f},' \
-                    '\tAccuracy: {:.6f}]'
+                'Step {}/{}: ' \
+                '[Total loss: {:.6f},' \
+                '\tMargin loss: {:.6f},' \
+                '\tReconstruction loss: {:.6f},' \
+                '\tBatch accuracy: {:.6f},' \
+                '\tAccuracy: {:.6f}]'
             tqdm.write(template.format(
                 epoch,
                 args.epochs,
                 global_step,
                 total_step,
-                loss.data[0],
-                margin_loss.data[0],
-                recon_loss.data[0] if args.use_reconstruction_loss else 0,
+                loss.data.item(),
+                margin_loss.data.item(),
+                recon_loss.data.item() if args.use_reconstruction_loss else 0,
                 acc,
                 epoch_avg_acc))
 
     # Print time elapsed for an epoch
     end_time = timer()
-    print('Time elapsed for epoch {}: {:.0f}s.'.format(epoch, end_time - start_time))
-
+    print('Time elapsed for epoch {}: {:.0f}s.'.format(
+        epoch, end_time - start_time))
+    avg_train_loss =epoch_tot_loss / num_batches
+    avg_train_accuracy =  epoch_avg_acc
+    return avg_train_accuracy, avg_train_loss
 
 def test(model, data_loader, num_train_batches, epoch, writer):
-    """
-    Evaluate model on validation set
-
-    Args:
-        model: The CapsuleNet model.
-        data_loader: An interator over the dataset. It combines a dataset and a sampler.
-    """
     print('===> Evaluate mode')
 
     # Switch to evaluate mode
@@ -149,8 +128,9 @@ def test(model, data_loader, num_train_batches, epoch, writer):
     for data, target in data_loader:
         batch_size = data.size(0)
         target_indices = target
-        target_one_hot = utils.one_hot_encode(target_indices, length=args.num_classes)
-        assert target_one_hot.size() == torch.Size([batch_size, 10])
+        target_one_hot = utils.one_hot_encode(
+            target_indices, length=args.num_classes)
+        assert target_one_hot.size() == torch.Size([batch_size, 4])
 
         data, target = Variable(data, volatile=True), Variable(target_one_hot)
 
@@ -159,13 +139,14 @@ def test(model, data_loader, num_train_batches, epoch, writer):
             target = target.cuda()
 
         # Output predictions
-        output = model(data) # output from DigitCaps (out_digit_caps)
+        output = model(data)  # output from DigitCaps (out_digit_caps)
 
         # Sum up batch loss
-        t_loss, m_loss, r_loss = model.loss(data, output, target, size_average=False)
-        loss += t_loss.data[0]
-        margin_loss += m_loss.data[0]
-        recon_loss += r_loss.data[0]
+        t_loss, m_loss, r_loss = model.loss(
+            data, output, target, size_average=False)
+        loss += t_loss.data[0].item()
+        margin_loss += m_loss.data[0].item()
+        recon_loss += r_loss.data[0].item()
 
         # Count number of correct predictions
         # v_magnitude shape: [128, 10, 1, 1]
@@ -182,18 +163,26 @@ def test(model, data_loader, num_train_batches, epoch, writer):
         image_width = args.input_width
         image_height = args.input_height
         image_channel = args.num_conv_in_channel
-        recon_img = reconstruction.view(-1, image_channel, image_width, image_height)
-        assert recon_img.size() == torch.Size([batch_size, image_channel, image_width, image_height])
+        recon_img = reconstruction.view(-1,
+                                        image_channel, image_width, image_height)
+        assert recon_img.size() == torch.Size(
+            [batch_size, image_channel, image_width, image_height])
 
         # Save the image into file system
-        utils.save_image(recon_img, 'results/recons_image_test_{}_{}.png'.format(epoch, global_step))
-        utils.save_image(data, 'results/original_image_test_{}_{}.png'.format(epoch, global_step))
+        utils.save_image(
+            recon_img, 'results/recons_image_test_{}_{}.png'.format(epoch, global_step))
+        utils.save_image(
+            data, 'results/original_image_test_{}_{}.png'.format(epoch, global_step))
 
         # Add and visualize the image in TensorBoard
-        recon_img = vutils.make_grid(recon_img.data, normalize=True, scale_each=True)
-        original_img = vutils.make_grid(data.data, normalize=True, scale_each=True)
-        writer.add_image('test/recons-image-{}-{}'.format(epoch, global_step), recon_img, global_step)
-        writer.add_image('test/original-image-{}-{}'.format(epoch, global_step), original_img, global_step)
+        recon_img = vutils.make_grid(
+            recon_img.data, normalize=True, scale_each=True)
+        original_img = vutils.make_grid(
+            data.data, normalize=True, scale_each=True)
+        writer.add_image('test/recons-image-{}-{}'.format(epoch,
+                         global_step), recon_img, global_step)
+        writer.add_image('test/original-image-{}-{}'.format(epoch,
+                         global_step), original_img, global_step)
 
     # Log test losses
     loss /= num_batches
@@ -214,27 +203,50 @@ def test(model, data_loader, num_train_batches, epoch, writer):
     writer.add_scalar('test/accuracy', accuracy, global_step)
 
     # Print test losses and accuracy
-    print('Test: [Loss: {:.6f},' \
-        '\tMargin loss: {:.6f},' \
-        '\tReconstruction loss: {:.6f}]'.format(
-            loss,
-            margin_loss,
-            recon_loss if args.use_reconstruction_loss else 0))
+    print('Test: [Loss: {:.6f},'
+          '\tMargin loss: {:.6f},'
+          '\tReconstruction loss: {:.6f}]'.format(
+              loss,
+              margin_loss,
+              recon_loss if args.use_reconstruction_loss else 0))
     print('Test Accuracy: {}/{} ({:.0f}%)\n'.format(
         correct, num_test_data, accuracy_percentage))
 
+    return accuracy, loss
+    
 
+def plot_metrics(train_accuracies, train_losses, test_accuracies, test_losses):
+    epochs = range(1, len(test_accuracies) + 1)
+    
+    plt.figure()
+    plt.plot(epochs, train_losses, label='Training Loss')
+    plt.plot(epochs, test_losses, label='Testing Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Loss vs Epochs')
+    plt.savefig('results/loss_plot.png')
+    plt.close() 
+    
+    plt.figure()
+    plt.plot(epochs, train_accuracies, label='Training Accuracy')
+    plt.plot(epochs, test_accuracies, label='Testing Accuracy')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.title('Accuracy vs Epochs')
+    plt.savefig('results/accuracy_plot.png')
+    plt.close() 
+    
+    
 def main():
-    """The main function
-    Entry point.
-    """
     global args
 
     # Setting the hyper parameters
     parser = argparse.ArgumentParser(description='Example of Capsule Network')
-    parser.add_argument('--epochs', type=int, default=10,
+    parser.add_argument('--epochs', type=int, default=50,
                         help='number of training epochs. default=10')
-    parser.add_argument('--lr', type=float, default=0.01,
+    parser.add_argument('--lr', type=float, default=0.001,
                         help='learning rate. default=0.01')
     parser.add_argument('--batch-size', type=int, default=128,
                         help='training batch size. default=128')
@@ -256,7 +268,7 @@ def main():
                         help='number of primary unit. default=8')
     parser.add_argument('--primary-unit-size', type=int,
                         default=1152, help='primary unit size is 32 * 6 * 6. default=1152')
-    parser.add_argument('--num-classes', type=int, default=10,
+    parser.add_argument('--num-classes', type=int, default=4,
                         help='number of digit classes. 1 unit for one MNIST digit. default=10')
     parser.add_argument('--output-unit-size', type=int,
                         default=16, help='output unit size. default=16')
@@ -266,7 +278,8 @@ def main():
                         help='use an additional reconstruction loss. default=True')
     parser.add_argument('--regularization-scale', type=float, default=0.0005,
                         help='regularization coefficient for reconstruction loss. default=0.0005')
-    parser.add_argument('--dataset', help='the name of dataset (mnist, cifar10)', default='mnist')
+    parser.add_argument(
+        '--dataset', help='the name of dataset (mnist, cifar10)', default='capsule')
     parser.add_argument('--input-width', type=int,
                         default=28, help='input image width to the convolution. default=28 for MNIST')
     parser.add_argument('--input-height', type=int,
@@ -315,15 +328,10 @@ def main():
     print('Parameters and size:')
     for name, param in model.named_parameters():
         print('{}: {}'.format(name, list(param.size())))
-
-    # CapsNet has:
-    # - 8.2M parameters and 6.8M parameters without the reconstruction subnet on MNIST.
-    # - 11.8M parameters and 8.0M parameters without the reconstruction subnet on CIFAR10.
     num_params = sum([param.nelement() for param in model.parameters()])
 
-    # The coupling coefficients c_ij are not included in the parameter list,
-    # we need to add them manually, which is 1152 * 10 = 11520 (on MNIST) or 2048 * 10 (on CIFAR10)
-    print('\nTotal number of parameters: {}\n'.format(num_params + (11520 if args.dataset == 'mnist' else 20480)))
+    print('\nTotal number of parameters: {}\n'.format(
+        num_params + (11520 if args.dataset == 'mnist' else 20480)))
 
     # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -336,10 +344,17 @@ def main():
     writer = SummaryWriter()
 
     # Train and test
+    train_accuracies, train_losses = [], []
+    test_accuracies, test_losses = [], []
     for epoch in range(1, args.epochs + 1):
-        train(model, train_loader, optimizer, epoch, writer)
-        test(model, test_loader, len(train_loader), epoch, writer)
-
+        avg_train_accuracy, avg_train_loss = train(model, train_loader, optimizer, epoch, writer)
+        avg_test_accuracy, avg_test_loss = test(model, test_loader, len(train_loader), epoch, writer)
+        train_accuracies.append(avg_train_accuracy)
+        train_losses.append(avg_train_loss)
+        
+        test_accuracies.append(avg_test_accuracy)
+        test_losses.append(avg_test_loss)
+        
         # Save model checkpoint
         utils.checkpoint({
             'epoch': epoch + 1,
@@ -349,6 +364,6 @@ def main():
 
     writer.close()
 
-
+    plot_metrics(train_accuracies, train_losses, test_accuracies, test_losses)
 if __name__ == "__main__":
     main()
